@@ -251,25 +251,26 @@ class EmbeddedModelRuntime:
             previous_role = self._profile_key
             llm = self._load_locked("vision")
 
-            content: List[Dict[str, Any]] = [
-                {
-                    "type": "text",
-                    "text": (
-                        "Analyze the attached image(s) carefully. Report only "
-                        "what is visible. For Unreal Editor screenshots, identify "
-                        "relevant panels, settings, warnings, errors, and visible "
-                        "object state. Distinguish observations from inferences. "
-                        f"User's question: {instruction}"
-                    ),
-                }
-            ]
-            for path in paths:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": self._image_data_uri(path)},
-                })
-
+            analysis = ""
             try:
+                content: List[Dict[str, Any]] = [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Analyze the attached image(s) carefully. Report only "
+                            "what is visible. For Unreal Editor screenshots, identify "
+                            "relevant panels, settings, warnings, errors, and visible "
+                            "object state. Distinguish observations from inferences. "
+                            f"User's question: {instruction}"
+                        ),
+                    }
+                ]
+                for path in paths:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": self._image_data_uri(path)},
+                    })
+
                 result = llm.create_chat_completion(
                     messages=[
                         {
@@ -287,17 +288,19 @@ class EmbeddedModelRuntime:
                     top_p=0.9,
                 )
                 message = result["choices"][0]["message"]
-                analysis = message.get("content", "")
-                if not isinstance(analysis, str) or not analysis.strip():
+                value = message.get("content", "")
+                if not isinstance(value, str) or not value.strip():
                     raise RuntimeError("Gemma returned an empty visual analysis.")
+                analysis = value.strip()
             finally:
                 # Do not retain Gemma while K2 is generating.
-                if restore_chat_model and previous_role in (None, "chat"):
-                    self._unload_locked()
-                    if stop_event is None or not stop_event.is_set():
-                        self._load_locked("chat")
-                else:
-                    self._unload_locked()
+                self._unload_locked()
+                if (
+                    restore_chat_model
+                    and previous_role == "chat"
+                    and (stop_event is None or not stop_event.is_set())
+                ):
+                    self._load_locked("chat")
 
             return analysis.strip()
 
