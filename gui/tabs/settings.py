@@ -316,7 +316,7 @@ class SettingsTab(ScrollArea):
         self.voice_group.addSettingCard(self.tts_voice_card)
 
         self.voice_assistant_card = SwitchCard(
-            FIF.MICROPHONE,
+            FIF.VOLUME,
             "Voice Assistant",
             "Load speech recognition only when enabled; uses the embedded K2 model",
             "voice.enabled",
