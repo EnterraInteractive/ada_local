@@ -176,11 +176,9 @@ class TextInputCard(SettingCard):
 
 
 class SettingsTab(ScrollArea):
-    voice_enabled_changed = Signal(bool)
+    """Settings for embedded models and optional application capabilities."""
 
-    """
-    Comprehensive Settings Tab with model selection and preferences.
-    """
+    voice_enabled_changed = Signal(bool)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("settingsInterface")
@@ -284,7 +282,7 @@ class SettingsTab(ScrollArea):
         self.ai_group.addSettingCard(self.gpu_layers_card)
 
         self.cpu_threads_card = TextInputCard(
-            FIF.SPEED,
+            FIF.INFO,
             "CPU Threads",
             "CPU threads used by local inference",
             "inference.cpu_threads",
