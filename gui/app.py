@@ -122,7 +122,7 @@ class MainWindow(FluentWindow):
     def _on_wake_word_detected(self):
         """Handle wake word detection - show listening indicator."""
         print(f"{GREEN}[App] ✓ Wake word signal received in UI thread!{RESET}")
-        if VOICE_ASSISTANT_ENABLED:
+        if settings.get('voice.enabled', False):
             print(f"{GREEN}[App] Showing voice indicator...{RESET}")
             # Use system monitor's simple indicator instead of overlay
             self.system_monitor.show_listening()
