@@ -1,20 +1,22 @@
 import json
 import re
-import requests
 from typing import List, Dict, Any, Generator
 
-from core.settings_store import settings as app_settings
+from core.inference import runtime as inference_runtime
 
 class VLMClient:
     """
-    Client for interacting with Qwen3-VL (or similar) models via Ollama.
-    Handles the specific prompt engineering for 'computer use'.
+    Embedded Gemma 4 vision client for A.D.A.'s browser agent.
+
+    The model runs inside the A.D.A. process; no Ollama endpoint or
+    llama-server subprocess is used. Gemma stays loaded across a browser
+    task and is released when BrowserAgent finishes.
     """
-    def __init__(self, model_name: str = None, base_url: str = None, model_params: Dict[str, Any] = None):
-        # Read from settings store, with fallbacks
-        self.model_name = model_name or app_settings.get("models.web_agent", "qwen3-vl:4b")
-        self.base_url = base_url or app_settings.get("ollama_url", "http://localhost:11434")
-        self.model_params = model_params or app_settings.get("web_agent_params", {})
+
+    def __init__(self, model_name: str = None, base_url: str = None,
+                 model_params: Dict[str, Any] = None):
+        self.model_name = model_name or "Gemma 4 (local GGUF)"
+        self.model_params = model_params or {}
 
     def construct_system_prompt(self) -> str:
         """
@@ -90,67 +92,43 @@ class VLMClient:
 
     def generate_action(self, messages: List[Dict[str, Any]]) -> Generator[Dict[str, Any], None, None]:
         """
-        Sends the messages to the model and yields chunks/result.
-        Yields:
-            Dict: {"type": "thinking", "content": str} for streaming thought
-            Dict: {"type": "text", "content": str} for streaming text response
-            Dict: {"type": "action", "content": dict} for final parsed action
+        Send browser history and its latest screenshot to embedded Gemma 4.
+        Yields a complete text result followed by its parsed action.
         """
         try:
-            response = requests.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model_name,
-                    "messages": messages,
-                    "stream": True,
-                    "think": True,
-                    "options": self.model_params
-                },
-                stream=True
-            )
-            
-            full_response = ""
-            full_thinking = ""
-            
-            for line in response.iter_lines():
-                if line:
-                    data = json.loads(line.decode('utf-8'))
-                    msg = data.get("message", {})
-                    
-                    # 1. Handle "thinking" field (Qwen/DeepSeek reasoning models)
-                    if "thinking" in msg and msg["thinking"]:
-                        yield {"type": "thinking", "content": msg["thinking"]}
-                        full_thinking += msg["thinking"]
-                    
-                    # 2. Handle "content" field
-                    chunk = msg.get("content", "")
-                    if chunk:
-                        full_response += chunk
-                        yield {"type": "text", "content": chunk}
-                        
-                    if data.get("done"):
-                        break
-            
-            print(f"\n[DEBUG] Full Thinking:\n{full_thinking}\n")
-            print(f"[DEBUG] Full Model Response (No Thinking):\n{full_response}\n[DEBUG] End Response\n")
+            prepared = []
+            images = []
+            for message in messages:
+                copied = dict(message)
+                if copied.get("role") == "user" and copied.get("images"):
+                    images.extend(copied.pop("images"))
+                prepared.append(copied)
 
-            # Parse the final complete response
-            action = self._parse_action(full_response)
-            if not action and full_thinking:
-                print("[DEBUG] Content empty or no action, trying to parse from Thinking...")
-                # Fallback: sometimes models put the tool call inside the thought process or mixed
-                action = self._parse_action(full_thinking + "\n" + full_response)
-            
+            if not images:
+                raise ValueError("Browser agent did not attach a screenshot to the vision request.")
+
+            response_text = inference_runtime.vision_completion(
+                prepared,
+                image_base64=images,
+                max_tokens=1200,
+                temperature=float(self.model_params.get("temperature", 0.2)),
+                top_p=float(self.model_params.get("top_p", 0.9)),
+                keep_vision_loaded=True,
+                restore_chat_model=False,
+            )
+            yield {"type": "text", "content": response_text}
+
+            action = self._parse_action(response_text)
             if action:
                 yield {"type": "action", "content": action}
             else:
-                # Debugging: Inform user/logs that no tool call was found
-                debug_msg = f"[DEBUG] NO TOOL CALL FOUND.\nFull Text: {full_response}\nFull Thinking: {full_thinking}"
-                yield {"type": "text", "content": debug_msg}
+                yield {
+                    "type": "text",
+                    "content": "A.D.A could not parse a browser action from Gemma's response."
+                }
 
-        except Exception as e:
-            print(f"VLM Error: {e}")
-            yield {"type": "error", "content": str(e)}
+        except Exception as exc:
+            yield {"type": "error", "content": str(exc)}
 
     def _extract_json_candidates(self, text: str) -> List[str]:
         """
