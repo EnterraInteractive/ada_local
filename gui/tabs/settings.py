@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, Signal
 
 from qfluentwidgets import (
     ScrollArea, ExpandLayout, SettingCardGroup, PushSettingCard, FluentIcon as FIF,
-    setTheme, Theme, PrimaryPushSettingCard, ComboBox, LineEdit, 
+    setTheme, Theme, PrimaryPushSettingCard, ComboBox, LineEdit, PushButton, 
     InfoBar, InfoBarPosition, SettingCard, Slider, 
     StrongBodyLabel, SwitchButton
 )
@@ -193,8 +193,6 @@ class SettingsTab(ScrollArea):
         self.setWidget(self.scrollWidget)
         self.setWidgetResizable(True)
         
-        self.model_fetcher = None
-        self._available_models = []
         
         self._init_ui()
 
