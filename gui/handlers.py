@@ -1,7 +1,4 @@
 from PySide6.QtCore import QObject, Signal, QThread, QTimer
-import json
-import re
-
 from config import MAX_HISTORY
 from core.tts import tts, SentenceBuffer
 from core.history import history_manager
