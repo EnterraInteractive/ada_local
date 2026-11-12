@@ -7,6 +7,10 @@ from core.tts import tts, SentenceBuffer
 from core.history import history_manager
 from core.settings_store import settings as app_settings
 from core.inference import runtime as inference_runtime
+from core.command_router import route_command
+from core.function_executor import executor as function_executor
+
+ACTION_FUNCTIONS = {\"control_light\", \"set_timer\", \"set_alarm\", \"create_calendar_event\", \"add_task\", \"web_search\"}
 
 
 # DEBUG: Set to True to test streaming without TTS blocking
@@ -66,6 +70,41 @@ class ChatWorker(QObject):
                     "Use these visual findings as evidence. Do not claim you "
                     "personally inspected the image pixels."
                 )
+            else:
+                func_name, params = route_command(self.user_text)
+                if func_name:
+                    self.status.emit(f"Executing {func_name}...")
+                    if func_name == "web_search":
+                        self.search_start.emit(params.get("query", ""))
+
+                    result = function_executor.execute(func_name, params)
+
+                    if func_name == "web_search":
+                        self.search_end.emit()
+
+                    self.toast.emit(result.get("message", "Action completed."), result.get("success", False))
+
+                    if result.get("success"):
+                        data = result.get("data") or {}
+                        if func_name == "set_timer":
+                            self.set_timer_signal.emit(
+                                int(data.get("seconds", 0)),
+                                data.get("label", "Timer"),
+                            )
+                        elif func_name == "set_alarm":
+                            self.reload_alarms.emit()
+                        elif func_name == "create_calendar_event":
+                            self.reload_calendar.emit()
+
+                    status_text = "succeeded" if result.get("success") else "failed"
+                    user_prompt = (
+                        f"User requested: {self.user_text}\n"
+                        f"A.D.A. action: {func_name} ({status_text})\n"
+                        f"Result: {result.get('message', '')}\n"
+                        f"Structured data: {result.get('data')}\n"
+                        "Respond naturally and accurately. Do not claim an action "
+                        "succeeded unless the result says it succeeded."
+                    )
 
             self.messages.append({"role": "user", "content": user_prompt})
             if self.current_session_id:
