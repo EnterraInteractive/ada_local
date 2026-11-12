@@ -1,8 +1,7 @@
 import json
-import requests
+from core.inference import runtime as inference_runtime
 import datetime
 from duckduckgo_search import DDGS
-from config import OLLAMA_URL, RESPONDER_MODEL
 
 class NewsManager:
     """Manages fetching and curating news for the Briefing dashboard."""
@@ -122,46 +121,49 @@ Do NOT add any markdown or text. Just the JSON array.
 """
         
         try:
-            response = requests.post(
-                f"{OLLAMA_URL}/chat",
-                json={
-                    "model": RESPONDER_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                    "options": {"temperature": 0.3}
-                },
-                timeout=60
+            response_parts = inference_runtime.stream_chat(
+                [{"role": "user", "content": prompt}],
+                max_tokens=900,
+                temperature=0.3,
+                top_p=0.9,
             )
-            
-            if response.status_code == 200:
-                content = response.json()['message']['content']
-                # Try to clean markdown code blocks if present
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].strip()
-                
-                selected = json.loads(content)
-                
-                # Merge back with original data (urls, images)
-                final_list = []
-                for s in selected:
-                    original = raw_news[s['id']]
-                    final_list.append({
-                        "title": s['title'], # AI rewritten title
-                        "source": original.get('source'),
-                        "date": original.get('date'), # DDGS date is often "2 hours ago"
-                        "category": s['category'], # AI Category
-                        "url": original.get('url'),
-                        "image": original.get('image'),
-                        "body": original.get('body') # snippet
-                    })
-                return final_list
-                
+            content = "".join(response_parts).strip()
+
+            fence = chr(96) * 3
+            if content.startswith(fence):
+                content = content[len(fence):].strip()
+                if content.lower().startswith("json"):
+                    content = content[4:].strip()
+                if content.endswith(fence):
+                    content = content[:-len(fence)].strip()
+
+            selected = json.loads(content)
+            if not isinstance(selected, list):
+                raise ValueError("News curation response was not a JSON array.")
+
+            final_list = []
+            for item in selected:
+                if not isinstance(item, dict):
+                    continue
+                original_id = item.get("id")
+                if not isinstance(original_id, int) or not (0 <= original_id < len(raw_news)):
+                    continue
+                original = raw_news[original_id]
+                final_list.append({
+                    "title": str(item.get("title") or original.get("title") or ""),
+                    "source": original.get("source"),
+                    "date": original.get("date"),
+                    "category": str(item.get("category") or original.get("category") or "General"),
+                    "url": original.get("url"),
+                    "image": original.get("image"),
+                    "body": original.get("body"),
+                })
+            return final_list or None
+
         except Exception as e:
             print(f"AI Curation failed: {e}")
             return None
-        
+
         return None
 
 news_manager = NewsManager()
