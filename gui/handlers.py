@@ -2,17 +2,11 @@ from PySide6.QtCore import QObject, Signal, QThread, QTimer
 import json
 import re
 
-from config import RESPONDER_MODEL, OLLAMA_URL, MAX_HISTORY
-from core.llm import route_query, should_bypass_router, http_session
+from config import MAX_HISTORY
 from core.tts import tts, SentenceBuffer
 from core.history import history_manager
-from core.model_manager import ensure_exclusive_qwen
-from core.model_persistence import ensure_qwen_loaded, mark_qwen_used
 from core.settings_store import settings as app_settings
-from core.function_executor import executor as function_executor
-
-# Functions that are actions (not passthrough)
-ACTION_FUNCTIONS = {"control_light", "set_timer", "set_alarm", "create_calendar_event", "add_task", "web_search"}
+from core.inference import runtime as inference_runtime
 
 
 # DEBUG: Set to True to test streaming without TTS blocking
@@ -39,277 +33,92 @@ class ChatWorker(QObject):
     search_start = Signal(str)  # query
     search_end = Signal()
     
-    def __init__(self, user_text: str, messages: list, is_tts_enabled: bool, 
-                 current_session_id: str, stop_event):
+    def __init__(self, user_text: str, messages: list, is_tts_enabled: bool,
+                 current_session_id: str, stop_event, image_paths=None):
         super().__init__()
         self.user_text = user_text
         self.messages = messages
         self.is_tts_enabled = is_tts_enabled
         self.current_session_id = current_session_id
         self.stop_event = stop_event
+        self.image_paths = list(image_paths or [])
         self.full_response = ""
         
     def process(self):
-        """Background processing method."""
+        """Analyze attachments with Gemma, then answer with K2 in one local process."""
         try:
-            if should_bypass_router(self.user_text):
-                func_name = "nonthinking"
-                params = {"prompt": self.user_text}
-            else:
-                self.status.emit("Routing...")
-                func_name, params = route_query(self.user_text)
-            
-            # Handle action functions
-            if func_name in ACTION_FUNCTIONS:
-                self.status.emit(f"Executing {func_name}...")
-                
-                # Emit search start for web_search
-                if func_name == "web_search":
-                    query = params.get("query", "")
-                    self.search_start.emit(query)
-                
-                result = function_executor.execute(func_name, params)
-                
-                # Emit search end for web_search
-                if func_name == "web_search":
-                    self.search_end.emit()
-                
-                # Emit toast notification
-                self.toast.emit(result["message"], result["success"])
-                
-                # Emit GUI update signals for specific actions
-                if func_name == "set_timer" and result["success"]:
-                    seconds = result.get("data", {}).get("seconds", 0)
-                    label = result.get("data", {}).get("label", "Timer")
-                    self.set_timer_signal.emit(seconds, label)
-                elif func_name == "set_alarm" and result["success"]:
-                    self.reload_alarms.emit()
-                elif func_name == "create_calendar_event" and result["success"]:
-                    self.reload_calendar.emit()
-                
-                # Enable thinking for web_search
-                enable_thinking = (func_name == "web_search")
-                
-                # Generate Qwen response with context
-                self._generate_response_with_context(func_name, result, enable_thinking)
-                
-            # Handle get_system_info (context query)
-            elif func_name == "get_system_info":
-                self.status.emit("Gathering system info...")
-                result = function_executor.execute(func_name, params)
-                
-                # Generate Qwen response with full system context
-                self._generate_response_with_context(func_name, result, enable_thinking=True)
-            
-            # Handle thinking/nonthinking (direct passthrough)
-            elif func_name in ("thinking", "nonthinking"):
-                enable_thinking = (func_name == "thinking")
-                self._stream_qwen_response(enable_thinking)
-            
-            # Unknown function - treat as nonthinking
-            else:
-                self._stream_qwen_response(False)
+            user_prompt = self.user_text
+
+            if self.image_paths:
+                self.status.emit("Analyzing images with Gemma 4...")
+                visual_findings = inference_runtime.analyze_images(
+                    self.image_paths,
+                    self.user_text or "Describe the attached image(s).",
+                    stop_event=self.stop_event,
+                    restore_chat_model=True,
+                )
+                if self.stop_event.is_set():
+                    return
+                user_prompt = (
+                    f"{self.user_text or 'Please analyze these images.'}"
+                    "\n\nVISUAL ANALYSIS FROM GEMMA 4 (actual image inspection):\n"
+                    f"{visual_findings}\n\n"
+                    "Use these visual findings as evidence. Do not claim you "
+                    "personally inspected the image pixels."
+                )
+
+            self.messages.append({"role": "user", "content": user_prompt})
+            if self.current_session_id:
+                history_manager.add_message(self.current_session_id, "user", user_prompt)
+
+            self.status.emit("Generating with K2-Horizon...")
+            self._stream_local_response()
 
         except Exception as e:
             self.error.emit(str(e))
-        
         finally:
             self.done.emit()
-    
-    def _generate_response_with_context(self, func_name: str, result: dict, enable_thinking: bool = False):
-        """Generate a Qwen response with function result as context."""
-        # Build system message with context
-        if func_name == "get_system_info" and result.get("success"):
-            data = result.get("data", {})
-            context_parts = []
-            
-            if data.get("timers"):
-                context_parts.append(f"Active timers: {data['timers']}")
-            if data.get("alarms"):
-                context_parts.append(f"Alarms: {data['alarms']}")
-            if data.get("calendar_today"):
-                context_parts.append(f"Today's events: {data['calendar_today']}")
-            if data.get("tasks"):
-                pending = [t for t in data['tasks'] if not t.get('completed')]
-                context_parts.append(f"Pending tasks: {len(pending)} items")
-            if data.get("smart_devices"):
-                on_devices = [d['name'] for d in data['smart_devices'] if d.get('is_on')]
-                context_parts.append(f"Devices on: {on_devices if on_devices else 'none'}")
-            if data.get("weather"):
-                w = data['weather']
-                context_parts.append(f"Weather: {w.get('temp')}°F, {w.get('condition')}")
-            if data.get("news"):
-                news_items = data['news']
-                if news_items:
-                    news_titles = [item.get('title', '')[:50] for item in news_items[:3]]
-                    context_parts.append(f"Top news: {', '.join(news_titles)}")
-            
-            context_msg = "SYSTEM CONTEXT:\n" + "\n".join(context_parts) if context_parts else ""
-        else:
-            # Action function result
-            status = "succeeded" if result.get("success") else "failed"
-            
-            # Special handling for web_search to include full results
-            if func_name == "web_search" and result.get("success") and result.get("data"):
-                search_data = result.get("data", {})
-                query = search_data.get("query", "")
-                results = search_data.get("results", [])
-                
-                if results:
-                    context_msg = f"SEARCH RESULTS for '{query}':\n\n"
-                    for i, r in enumerate(results, 1):
-                        title = r.get("title", "")
-                        body = r.get("body", "")
-                        url = r.get("url", "")
-                        context_msg += f"{i}. {title}\n"
-                        context_msg += f"   {body}\n"
-                        context_msg += f"   URL: {url}\n\n"
-                    context_msg += "Use the above search results to answer the user's question. Include relevant URLs in your response using markdown link format [text](url)."
-                else:
-                    context_msg = f"ACTION RESULT: {func_name} {status}. {result.get('message', '')}"
-            else:
-                context_msg = f"ACTION RESULT: {func_name} {status}. {result.get('message', '')}"
-        
-        # Prepare messages with context
-        max_hist = app_settings.get("general.max_history", MAX_HISTORY)
-        if len(self.messages) > max_hist:
-            self.messages = [self.messages[0]] + self.messages[-(max_hist-1):]
-        
-        # Add context as system message and user's original question
-        context_prompt = f"{context_msg}\n\nUser asked: {self.user_text}\n\nRespond naturally and concisely."
-        self.messages.append({'role': 'user', 'content': context_prompt})
-        
-        self.ui_update.emit()
-        self.status.emit("Generating response...")
-        
-        model = app_settings.get("models.chat", RESPONDER_MODEL)
-        ensure_qwen_loaded()  # Use persistence manager
-        mark_qwen_used()
-        ensure_exclusive_qwen(model)
-        ollama_url = app_settings.get("ollama_url", OLLAMA_URL)
-        
-        payload = {
-            "model": model,
-            "messages": self.messages,
-            "stream": True,
-            "think": enable_thinking,  # Enable thinking for web_search
-            "keep_alive": "5m"  # Longer keep-alive for voice assistant
-        }
-        
-        sentence_buffer = SentenceBuffer()
-        self.full_response = ""
-        self.think_start.emit(enable_thinking)
-        
-        with http_session.post(f"{ollama_url}/api/chat", json=payload, stream=True) as r:
-            r.raise_for_status()
-            
-            for line in r.iter_lines():
-                if self.stop_event.is_set():
-                    break
-                    
-                if line:
-                    try:
-                        chunk = json.loads(line.decode('utf-8'))
-                        msg = chunk.get('message', {})
-                        
-                        # Handle thinking chunks (for web_search)
-                        if 'thinking' in msg and msg['thinking']:
-                            thought = msg['thinking']
-                            self.thought_chunk.emit(thought)
-                        
-                        if 'content' in msg and msg['content']:
-                            content = msg['content']
-                            self.full_response += content
-                            self.response_chunk.emit(content)
-                            
-                            if self.is_tts_enabled and not DEBUG_SKIP_TTS:
-                                sentences = sentence_buffer.add(content)
-                                for s in sentences:
-                                    tts.queue_sentence(s)
-                    except:
-                        continue
-        
-        self.think_end.emit()
-        
-        if self.is_tts_enabled and not DEBUG_SKIP_TTS and not self.stop_event.is_set():
-            rem = sentence_buffer.flush()
-            if rem:
-                tts.queue_sentence(rem)
-        
-        self.messages.append({'role': 'assistant', 'content': self.full_response})
-        
-        if self.current_session_id:
-            history_manager.add_message(self.current_session_id, "assistant", self.full_response)
-    
-    def _stream_qwen_response(self, enable_thinking: bool):
-        """Stream a direct Qwen response (for thinking/nonthinking)."""
-        max_hist = app_settings.get("general.max_history", MAX_HISTORY)
-        if len(self.messages) > max_hist:
-            self.messages = [self.messages[0]] + self.messages[-(max_hist-1):]
-        
-        self.messages.append({'role': 'user', 'content': self.user_text})
-        
-        self.ui_update.emit()
-        self.status.emit("Generating...")
-        
-        model = app_settings.get("models.chat", RESPONDER_MODEL)
-        ensure_qwen_loaded()  # Use persistence manager
-        mark_qwen_used()
-        ensure_exclusive_qwen(model)
-        ollama_url = app_settings.get("ollama_url", OLLAMA_URL)
-        
-        payload = {
-            "model": model,
-            "messages": self.messages,
-            "stream": True,
-            "think": enable_thinking,
-            "keep_alive": "5m"  # Longer keep-alive for voice assistant
-        }
-        
-        sentence_buffer = SentenceBuffer()
-        self.full_response = ""
-        self.think_start.emit(enable_thinking)
 
-        with http_session.post(f"{ollama_url}/api/chat", json=payload, stream=True) as r:
-            r.raise_for_status()
-            
-            for line in r.iter_lines():
-                if self.stop_event.is_set():
-                    break
-                    
-                if line:
-                    try:
-                        chunk = json.loads(line.decode('utf-8'))
-                        msg = chunk.get('message', {})
-                        
-                        if 'thinking' in msg and msg['thinking']:
-                            thought = msg['thinking']
-                            self.thought_chunk.emit(thought)
-                            
-                        if 'content' in msg and msg['content']:
-                            content = msg['content']
-                            self.full_response += content
-                            self.response_chunk.emit(content)
-                            
-                            if self.is_tts_enabled and not DEBUG_SKIP_TTS:
-                                sentences = sentence_buffer.add(content)
-                                for s in sentences:
-                                    tts.queue_sentence(s)
-                                    
-                    except:
-                        continue
-        
+    def _stream_local_response(self):
+        """Stream the primary K2-Horizon model through the embedded runtime."""
+        max_hist = app_settings.get("general.max_history", MAX_HISTORY)
+        if len(self.messages) > max_hist:
+            self.messages = [self.messages[0]] + self.messages[-(max_hist - 1):]
+
+        self.ui_update.emit()
+        self.think_start.emit(False)
+        self.full_response = ""
+        sentence_buffer = SentenceBuffer()
+
+        for text_chunk in inference_runtime.stream_chat(
+            self.messages,
+            max_tokens=2048,
+            temperature=0.4,
+            top_p=0.9,
+            stop_event=self.stop_event,
+        ):
+            if self.stop_event.is_set():
+                break
+            self.full_response += text_chunk
+            self.response_chunk.emit(text_chunk)
+
+            if self.is_tts_enabled and not DEBUG_SKIP_TTS:
+                for sentence in sentence_buffer.add(text_chunk):
+                    tts.queue_sentence(sentence)
+
         self.think_end.emit()
-        
+
         if self.is_tts_enabled and not DEBUG_SKIP_TTS and not self.stop_event.is_set():
-            rem = sentence_buffer.flush()
-            if rem:
-                tts.queue_sentence(rem)
-        
-        self.messages.append({'role': 'assistant', 'content': self.full_response})
-        
-        if self.current_session_id:
-            history_manager.add_message(self.current_session_id, "assistant", self.full_response)
+            remaining = sentence_buffer.flush()
+            if remaining:
+                tts.queue_sentence(remaining)
+
+        if self.full_response:
+            self.messages.append({"role": "assistant", "content": self.full_response})
+            if self.current_session_id:
+                history_manager.add_message(
+                    self.current_session_id, "assistant", self.full_response
+                )
 
 
 class ChatHandlers(QObject):
@@ -524,25 +333,28 @@ class ChatHandlers(QObject):
             self.main_window.set_status("Stopping...")
             self.ui_throttle_timer.stop()
 
-    def send_message(self, text: str):
-        """Handle sending a new message."""
-        tts.stop()  # Interrupt previous speech
+    def send_message(self, text: str, image_paths=None):
+        """Handle a text message and optional image attachments."""
+        tts.stop()
         text = text.strip()
-        if not text:
+        image_paths = list(image_paths or [])
+        if not text and not image_paths:
             return
-        
+        if not text:
+            text = "Please inspect the attached image(s) and explain what is visible."
+
         self.main_window.clear_input()
 
-        # Add User Message UI
-        self.main_window.add_message_bubble("user", text)
-        
+        image_names = [path.replace("\\", "/").split("/")[-1] for path in image_paths]
+        display_text = text
+        if image_names:
+            display_text += "\n\nAttached images: " + ", ".join(image_names)
+        self.main_window.add_message_bubble("user", display_text)
+
         # Start new session if needed
         if not self.current_session_id:
             self.init_new_session(text)
             self.refresh_sidebar()
-
-        # Save to DB
-        history_manager.add_message(self.current_session_id, "user", text)
         
         self._start_generation_state()
         
@@ -575,7 +387,7 @@ class ChatHandlers(QObject):
         self._thread = QThread(self)
         self._worker = ChatWorker(
             text, self.messages.copy(), self.is_tts_enabled,
-            self.current_session_id, self._stop_event
+            self.current_session_id, self._stop_event, image_paths=image_paths
         )
         self._worker.moveToThread(self._thread)
         
