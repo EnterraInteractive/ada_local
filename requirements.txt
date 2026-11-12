@@ -1,75 +1,33 @@
-# =====================================================
-# Pocket AI (A.D.A) - Python Dependencies
-# =====================================================
-# 
-# Install all dependencies with:
-#   pip install -r requirements.txt
+# A.D.A. — core desktop application dependencies
+# Python 3.10+ (Python 3.11 recommended)
 #
-# IMPORTANT: This project requires Python 3.10 or higher
-# IMPORTANT: For PyTorch with CUDA support, install from pytorch.org:
-#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-# =====================================================
+# The embedded llama.cpp runtime is built separately:
+#   .\scripts\install_llama_cpp_python.ps1
+#
+# Optional speech recognition dependencies are in requirements-voice.txt.
+# Optional legacy model-training dependencies are in requirements-router-dev.txt.
 
-# -----------------------------------------------------
-# Core GUI Framework
-# -----------------------------------------------------
-PySide6>=6.10.0                # Qt GUI framework for Python
-PySide6-Fluent-Widgets>=1.10.0 # Fluent Design UI components (PySide6 version)
-darkdetect>=0.8.0              # Detect system dark/light mode
-markdown>=3.4.0                # Markdown rendering for chat messages
-pygments>=2.15.0               # Syntax highlighting for code blocks
+# Desktop UI
+PySide6>=6.8.0
+PySide6-Fluent-Widgets>=1.7.0
+darkdetect>=0.8.0
+markdown>=3.4.0
+pygments>=2.15.0
 
-# -----------------------------------------------------
-# AI & Machine Learning
-# -----------------------------------------------------
-# NOTE: Install PyTorch with CUDA separately from pytorch.org
-# torch>=2.6.0                 # PyTorch (install with CUDA from pytorch.org)
-transformers>=4.57.0           # Hugging Face transformers for router model
-accelerate>=1.12.0             # Optimized model loading and inference
-safetensors>=0.7.0             # Fast model weight loading
+# Audio output (loaded only when voice output is enabled)
+numpy>=2.0.0
+sounddevice>=0.5.0
 
-# -----------------------------------------------------
-# Speech & Audio
-# -----------------------------------------------------
-piper-tts>=1.4.0               # Local text-to-speech engine (Piper TTS)
-sounddevice>=0.5.0             # Audio playback interface
-soundfile>=0.13.0              # Audio file I/O
-numpy>=2.0.0                   # Numerical computing (audio processing)
-realtimestt>=0.3.0             # Real-time speech-to-text with wake word detection
-PyAudio>=0.2.14                # Audio I/O for microphone access
+# Browser automation (Chromium is installed with Playwright)
+playwright>=1.57.0
+playwright-stealth>=2.0.0
 
-# -----------------------------------------------------
-# Browser Automation
-# -----------------------------------------------------
-playwright>=1.57.0             # Browser automation for web agent
-playwright-stealth>=2.0.0      # Stealth mode for browser automation
+# Smart home and app functions
+python-kasa>=0.10.0
+duckduckgo-search>=8.0.0
 
-# -----------------------------------------------------
-# Smart Home Control
-# -----------------------------------------------------
-python-kasa>=0.10.0            # TP-Link Kasa smart device control
-
-# -----------------------------------------------------
-# Web & API Integrations
-# -----------------------------------------------------
-requests>=2.32.0               # HTTP requests for API calls
-duckduckgo-search>=8.0.0       # DuckDuckGo search API (provides DDGS class)
-httpx>=0.28.0                  # Async HTTP client
-
-# -----------------------------------------------------
-# System Utilities
-# -----------------------------------------------------
-psutil>=7.0.0                  # System and process monitoring
-pynvml>=13.0.0                 # NVIDIA GPU monitoring (VRAM display)
-huggingface-hub>=0.36.0        # Download models from Hugging Face
-
-# -----------------------------------------------------
-# Local Data Storage
-# -----------------------------------------------------
-# SQLite is included with Python - no additional packages needed
-
-# -----------------------------------------------------
-# Development (Optional)
-# -----------------------------------------------------
-# pytest>=7.0.0                 # Testing framework
-# black>=23.0.0                 # Code formatting
+# HTTP / downloads / system monitoring
+requests>=2.32.0
+httpx>=0.28.0
+psutil>=7.0.0
+pynvml>=13.0.0
