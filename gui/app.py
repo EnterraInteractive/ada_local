@@ -83,42 +83,26 @@ class MainWindow(FluentWindow):
         self._init_background()
         self._init_voice_assistant()
         
+    def _connect_voice_signals(self):
+        """Connect voice callbacks once, regardless of when voice is enabled."""
+        if getattr(self, "_voice_signals_connected", False):
+            return
+        voice_assistant.wake_word_detected.connect(self._on_wake_word_detected)
+        voice_assistant.speech_recognized.connect(self._on_speech_recognized)
+        voice_assistant.processing_finished.connect(self._on_processing_finished)
+        voice_assistant.timer_set.connect(self._on_voice_timer_set)
+        voice_assistant.alarm_added.connect(self._on_voice_alarm_added)
+        voice_assistant.calendar_updated.connect(self._on_voice_calendar_updated)
+        voice_assistant.task_added.connect(self._on_voice_task_added)
+        self._voice_signals_connected = True
+
     def _init_voice_assistant(self):
-        """Initialize and start voice assistant if enabled."""
-        enabled = bool(settings.get("voice.enabled", False))
-        print(f"[App] Voice assistant enabled={enabled}")
-        if enabled:
-            # Connect voice assistant signals to UI
-            print(f"[App] Connecting voice assistant signals...")
-            voice_assistant.wake_word_detected.connect(self._on_wake_word_detected)
-            voice_assistant.speech_recognized.connect(self._on_speech_recognized)
-            voice_assistant.processing_finished.connect(self._on_processing_finished)
-            # Connect GUI update signals
-            voice_assistant.timer_set.connect(self._on_voice_timer_set)
-            voice_assistant.alarm_added.connect(self._on_voice_alarm_added)
-            voice_assistant.calendar_updated.connect(self._on_voice_calendar_updated)
-            voice_assistant.task_added.connect(self._on_voice_task_added)
-            print(f"[App] ✓ Signals connected")
-            
-            # Initialize in background thread to avoid blocking UI
-            def init_va():
-                print(f"[App] Background thread: Initializing voice assistant...")
-                if voice_assistant.initialize():
-                    print(f"[App] Background thread: ✓ Voice assistant initialized")
-                    # Enable TTS for voice assistant
-                    tts.toggle(True)
-                    print(f"[App] Background thread: TTS enabled")
-                    # Start listening
-                    print(f"[App] Background thread: Starting voice assistant...")
-                    voice_assistant.start()
-                    print(f"[App] Background thread: ✓ Voice assistant started")
-                else:
-                    print(f"[App] Background thread: ✗ Failed to initialize voice assistant")
-            
-            threading.Thread(target=init_va, daemon=True).start()
+        """Initialize voice only when the persisted setting explicitly enables it."""
+        if settings.get("voice.enabled", False):
+            self._set_voice_assistant_enabled(True)
         else:
-            print(f"[App] Voice assistant disabled in config")
-    
+            print("[App] Voice assistant is disabled; speech models remain unloaded.")
+
     def _on_wake_word_detected(self):
         """Handle wake word detection - show listening indicator."""
         print(f"{GREEN}[App] ✓ Wake word signal received in UI thread!{RESET}")
@@ -137,7 +121,7 @@ class MainWindow(FluentWindow):
     
     def _on_processing_finished(self):
         """Handle processing finished - hide listening indicator."""
-        if VOICE_ASSISTANT_ENABLED:
+        if settings.get('voice.enabled', False):
             # Small delay before hiding
             from PySide6.QtCore import QTimer
             QTimer.singleShot(500, lambda: self.system_monitor.hide_listening())
@@ -277,12 +261,19 @@ class MainWindow(FluentWindow):
             self.set_status("Voice assistant disabled")
             return
 
+        self._connect_voice_signals()
         self.set_status("Initializing voice assistant...")
 
         def initialize_voice():
             try:
+                if not settings.get("voice.enabled", False):
+                    return
                 if not voice_assistant.initialize():
                     self.set_status("Voice assistant initialization failed")
+                    settings.set("voice.enabled", False)
+                    return
+                if not settings.get("voice.enabled", False):
+                    voice_assistant.stop()
                     return
                 tts.toggle(True)
                 voice_assistant.start()
