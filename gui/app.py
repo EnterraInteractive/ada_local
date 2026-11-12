@@ -17,7 +17,8 @@ from gui.handlers import ChatHandlers
 from core.inference import runtime as inference_runtime
 from core.voice_assistant import voice_assistant
 from core.tts import tts
-from config import VOICE_ASSISTANT_ENABLED, GREEN, RESET
+from config import GREEN, RESET
+from core.settings_store import settings
 
 from gui.styles import AURA_STYLESHEET 
 
@@ -84,8 +85,9 @@ class MainWindow(FluentWindow):
         
     def _init_voice_assistant(self):
         """Initialize and start voice assistant if enabled."""
-        print(f"[App] Initializing voice assistant (enabled={VOICE_ASSISTANT_ENABLED})...")
-        if VOICE_ASSISTANT_ENABLED:
+        enabled = bool(settings.get("voice.enabled", False))
+        print(f"[App] Voice assistant enabled={enabled}")
+        if enabled:
             # Connect voice assistant signals to UI
             print(f"[App] Connecting voice assistant signals...")
             voice_assistant.wake_word_detected.connect(self._on_wake_word_detected)
@@ -266,6 +268,30 @@ class MainWindow(FluentWindow):
         # Insert another stretch after monitor to balance centering
         layout.insertStretch(min_btn_index + 2, 1)
     
+    def _set_voice_assistant_enabled(self, enabled: bool):
+        """Start or stop the optional speech stack only when the user requests it."""
+        settings.set("voice.enabled", bool(enabled))
+        if not enabled:
+            voice_assistant.stop()
+            tts.toggle(False)
+            self.set_status("Voice assistant disabled")
+            return
+
+        self.set_status("Initializing voice assistant...")
+
+        def initialize_voice():
+            try:
+                if not voice_assistant.initialize():
+                    self.set_status("Voice assistant initialization failed")
+                    return
+                tts.toggle(True)
+                voice_assistant.start()
+                self.set_status("Voice assistant ready")
+            except Exception as exc:
+                self.set_status(f"Voice assistant error: {exc}")
+
+        threading.Thread(target=initialize_voice, daemon=True).start()
+
     def _on_tab_changed(self, index):
         """Handle lazy loading when switching tabs."""
         widget = self.stackedWidget.widget(index)
@@ -285,8 +311,15 @@ class MainWindow(FluentWindow):
             elif obj_name == "homeInterface":
                 self.home_tab = real_widget
             elif obj_name == "browserInterface":
-                # No signals to connect for browser yet
+                # Browser agent owns its own execution signals.
                 pass
+            elif obj_name == "settingsInterface":
+                if hasattr(real_widget, "voice_enabled_changed"):
+                    try:
+                        real_widget.voice_enabled_changed.disconnect(self._set_voice_assistant_enabled)
+                    except (RuntimeError, TypeError):
+                        pass
+                    real_widget.voice_enabled_changed.connect(self._set_voice_assistant_enabled)
                 
         self.set_status("Ready")
     
@@ -331,7 +364,7 @@ class MainWindow(FluentWindow):
         self.set_status("Closing...")
         
         # Stop voice assistant
-        if VOICE_ASSISTANT_ENABLED:
+        if voice_assistant.running:
             voice_assistant.stop()
         
         inference_runtime.unload()
