@@ -5,6 +5,7 @@ Comprehensive Settings Tab with model selection, connection settings, and prefer
 from config import LOCAL_ROUTER_PATH, RESPONDER_MODEL
 
 import requests
+from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFileDialog
 )
@@ -390,7 +391,7 @@ class SettingsTab(ScrollArea):
         self.ai_group.addSettingCard(self.chat_model_path_card)
 
         self.vision_model_path_card = FilePathCard(
-            FIF.PHOTO,
+            FIF.GLOBE,
             "Vision Model — Gemma 4",
             "Local Gemma 4 GGUF loaded only when an image needs analysis",
             "models.vision_path",
@@ -400,7 +401,7 @@ class SettingsTab(ScrollArea):
         self.ai_group.addSettingCard(self.vision_model_path_card)
 
         self.vision_projector_path_card = FilePathCard(
-            FIF.IMAGE,
+            FIF.ROBOT,
             "Gemma 4 Vision Projector",
             "The matching mmproj GGUF file from the same Gemma 4 model release",
             "models.vision_projector_path",
@@ -430,7 +431,7 @@ class SettingsTab(ScrollArea):
         self.ai_group.addSettingCard(self.vision_context_card)
 
         self.gpu_layers_card = TextInputCard(
-            FIF.SPEED,
+            FIF.INFO,
             "GPU Layers",
             "Use -1 for automatic full offload, or specify a lower layer count",
             "inference.gpu_layers",
