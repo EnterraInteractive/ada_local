@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, 
-    QListWidgetItem, QSizePolicy, QMenu
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
+    QListWidgetItem, QSizePolicy, QMenu, QFileDialog
 )
 from PySide6.QtCore import Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QFont, QIcon, QColor
@@ -24,7 +24,7 @@ class ChatTab(QWidget):
     """
     
     # Signals to communicate with MainWindow/Handlers
-    send_message_requested = Signal(str)
+    send_message_requested = Signal(str, list)
     stop_generation_requested = Signal()
     tts_toggled = Signal(bool)
     new_chat_requested = Signal()
@@ -38,6 +38,7 @@ class ChatTab(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("ChatTab")
+        self.pending_image_paths = []
         self._setup_ui()
         self._connect_internal_signals()
 
@@ -124,8 +125,16 @@ class ChatTab(QWidget):
         input_layout.setContentsMargins(20, 10, 20, 20)
         input_layout.setSpacing(10)
 
+        self.attach_image_btn = PushButton("Attach images")
+        self.attach_image_btn.setFixedHeight(40)
+        input_layout.addWidget(self.attach_image_btn)
+
+        self.attachment_status = QLabel("")
+        self.attachment_status.setStyleSheet("color: #8a8a8a; font-size: 11px;")
+        input_layout.addWidget(self.attachment_status)
+
         self.user_input = LineEdit()
-        self.user_input.setPlaceholderText("Ask generic anything...")
+        self.user_input.setPlaceholderText("Ask A.D.A anything...")
         self.user_input.setClearButtonEnabled(True)
         self.user_input.setFixedHeight(40)
         input_layout.addWidget(self.user_input, 1)
@@ -148,14 +157,33 @@ class ChatTab(QWidget):
         self.new_chat_btn.clicked.connect(self.new_chat_requested.emit)
         self.send_btn.clicked.connect(self._on_send_clicked)
         self.user_input.returnPressed.connect(self._on_send_clicked)
+        self.attach_image_btn.clicked.connect(self._select_images)
         self.stop_btn.clicked.connect(self.stop_generation_requested.emit)
         self.tts_toggle.checkedChanged.connect(self.tts_toggled.emit)
         self.session_list.itemClicked.connect(self._on_session_clicked)
 
+    def _select_images(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Attach screenshots or images",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp);;All files (*.*)"
+        )
+        if paths:
+            self.pending_image_paths = paths
+            names = [path.replace("\\", "/").split("/")[-1] for path in paths]
+            self.attachment_status.setText(
+                f"{len(paths)} image(s): " + ", ".join(names[:2]) +
+                (" ..." if len(names) > 2 else "")
+            )
+
     def _on_send_clicked(self):
         text = self.user_input.text()
-        if text.strip():
-            self.send_message_requested.emit(text)
+        if text.strip() or self.pending_image_paths:
+            attachments = list(self.pending_image_paths)
+            self.pending_image_paths.clear()
+            self.attachment_status.clear()
+            self.send_message_requested.emit(text, attachments)
 
     def _on_session_clicked(self, item: QListWidgetItem):
         session_id = item.data(Qt.UserRole)
