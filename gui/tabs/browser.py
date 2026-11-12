@@ -88,10 +88,8 @@ class BrowserTab(QWidget):
         layout.addWidget(controls_container, stretch=2)
 
     def _setup_agent(self):
-        # Instantiate agent - model comes from settings now
-        from core.settings_store import settings
-        model_name = settings.get("models.web_agent", "qwen3-vl:4b")
-        self.agent = BrowserAgent(model_name=model_name) 
+        # Browser vision uses A.D.A.'s configured embedded Gemma model.
+        self.agent = BrowserAgent()
         self.agent.moveToThread(self.agent_thread)
         
         # Connect signals
