@@ -16,8 +16,20 @@ DEFAULT_SETTINGS = {
     "theme": "Dark",
     "ollama_url": "http://localhost:11434",
     "models": {
+        # Legacy Ollama identifiers retained only until voice/browser migration.
         "chat": "qwen3:1.7b",
         "web_agent": "qwen3-vl:4b",
+        # Embedded llama.cpp model files (loaded one at a time inside A.D.A.).
+        "chat_path": "",
+        "chat_context": 8192,
+        "vision_path": "",
+        "vision_projector_path": "",
+        "vision_context": 8192,
+    },
+    "inference": {
+        "backend": "embedded-llama.cpp",
+        "gpu_layers": -1,
+        "cpu_threads": 6,
     },
     "web_agent_params": {
         "temperature": 1.0,
