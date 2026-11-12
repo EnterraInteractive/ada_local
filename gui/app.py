@@ -5,7 +5,7 @@ Main PySide6 application setup and layout using Fluent Widgets.
 import threading
 import sys
 from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, QSize, QThread
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
 
 from qfluentwidgets import (
@@ -30,13 +30,6 @@ from gui.tabs.browser import BrowserTab
 from gui.tabs.home_automation import HomeAutomationTab
 from gui.components.system_monitor import SystemMonitor
 from gui.components.voice_indicator import VoiceIndicator
-from core.llm import preload_models
-
-
-class ModelPreloaderThread(QThread):
-    """Background thread to preload models at startup."""
-    def run(self):
-        preload_models()
 
 
 class LazyTab(QWidget):
@@ -87,14 +80,8 @@ class MainWindow(FluentWindow):
         self._init_window()
         self._connect_signals()
         self._init_background()
-        self._preload_models()
         self._init_voice_assistant()
         
-    def _preload_models(self):
-        """Start the background thread to preload models."""
-        self.preloader_thread = ModelPreloaderThread()
-        self.preloader_thread.start()
-    
     def _init_voice_assistant(self):
         """Initialize and start voice assistant if enabled."""
         print(f"[App] Initializing voice assistant (enabled={VOICE_ASSISTANT_ENABLED})...")
