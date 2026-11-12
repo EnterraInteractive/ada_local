@@ -95,7 +95,10 @@ class VoiceAssistant(QObject):
         
         self.running = False
         if self.stt_listener:
-            self.stt_listener.stop()
+            listener = self.stt_listener
+            self.stt_listener = None
+            listener.stop()
+            del listener
         print(f"{GRAY}[VoiceAssistant] Voice assistant stopped.{RESET}")
     
     def _on_wake_word(self):
