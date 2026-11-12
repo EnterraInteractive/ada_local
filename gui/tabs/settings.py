@@ -176,6 +176,8 @@ class TextInputCard(SettingCard):
 
 
 class SettingsTab(ScrollArea):
+    voice_enabled_changed = Signal(bool)
+
     """
     Comprehensive Settings Tab with model selection and preferences.
     """
@@ -312,7 +314,17 @@ class SettingsTab(ScrollArea):
             self.voice_group
         )
         self.voice_group.addSettingCard(self.tts_voice_card)
-        
+
+        self.voice_assistant_card = SwitchCard(
+            FIF.MICROPHONE,
+            "Voice Assistant",
+            "Load speech recognition only when enabled; uses the embedded K2 model",
+            "voice.enabled",
+            self.voice_group
+        )
+        self.voice_assistant_card.checked_changed.connect(self.voice_enabled_changed.emit)
+        self.voice_group.addSettingCard(self.voice_assistant_card)
+
         self.expandLayout.addWidget(self.voice_group)
 
         # ─────────────────────────────────────────────────────────────
