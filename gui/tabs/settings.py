@@ -6,7 +6,7 @@ from config import LOCAL_ROUTER_PATH, RESPONDER_MODEL
 
 import requests
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QHBoxLayout
+    QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFileDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 
@@ -201,6 +201,47 @@ class UrlInputCard(SettingCard):
         self.test_btn.setText("Test")
 
 
+class FilePathCard(SettingCard):
+    """Setting card for selecting a local model or projector file."""
+
+    value_changed = Signal(str)
+
+    def __init__(self, icon, title, description, key_path: str,
+                 file_filter: str, parent=None):
+        super().__init__(icon, title, description, parent)
+        self.key_path = key_path
+        self.file_filter = file_filter
+
+        self.path_input = LineEdit(self)
+        self.path_input.setMinimumWidth(320)
+        self.path_input.setPlaceholderText("Select a local GGUF file")
+        self.path_input.setText(str(settings.get(key_path, "")))
+        self.path_input.textChanged.connect(self._on_changed)
+
+        self.browse_button = PushButton("Browse", self)
+        self.browse_button.clicked.connect(self._browse)
+
+        self.hBoxLayout.addWidget(self.path_input, 1, Qt.AlignRight)
+        self.hBoxLayout.addSpacing(8)
+        self.hBoxLayout.addWidget(self.browse_button, 0, Qt.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def _on_changed(self, value: str):
+        settings.set(self.key_path, value.strip())
+        self.value_changed.emit(value.strip())
+
+    def _browse(self):
+        current = self.path_input.text().strip()
+        selected, _ = QFileDialog.getOpenFileName(
+            self.window(),
+            "Select model file",
+            current or str(Path.home()),
+            self.file_filter,
+        )
+        if selected:
+            self.path_input.setText(selected)
+
+
 class SliderCard(SettingCard):
     """Setting card with a slider and value label."""
     
@@ -312,7 +353,6 @@ class SettingsTab(ScrollArea):
         self._available_models = []
         
         self._init_ui()
-        self._fetch_models()  # Auto-fetch on load
 
     def _init_ui(self):
         # ─────────────────────────────────────────────────────────────
@@ -333,66 +373,84 @@ class SettingsTab(ScrollArea):
         self.expandLayout.addWidget(self.personal_group)
 
         # ─────────────────────────────────────────────────────────────
-        # AI Models Group
         # ─────────────────────────────────────────────────────────────
-        self.ai_group = SettingCardGroup("AI Models", self.scrollWidget)
-        
-        self.chat_model_card = ModelSelectCard(
+        # Unified Local Models (embedded llama.cpp)
+        # ─────────────────────────────────────────────────────────────
+        self.ai_group = SettingCardGroup("Local AI Models", self.scrollWidget)
+
+        gguf_filter = "GGUF model (*.gguf);;All files (*.*)"
+        self.chat_model_path_card = FilePathCard(
             FIF.CHAT,
-            "Chat Model",
-            "Ollama model for general chat responses",
-            "models.chat",
+            "Primary Chat Model — K2-Horizon",
+            "Local K2-Horizon GGUF used for coding and normal conversation",
+            "models.chat_path",
+            gguf_filter,
             self.ai_group
         )
-        self.ai_group.addSettingCard(self.chat_model_card)
-        
-        self.web_agent_model_card = ModelSelectCard(
-            FIF.GLOBE,
-            "Web Agent Model",
-            "Vision-language model for browser automation",
-            "models.web_agent",
+        self.ai_group.addSettingCard(self.chat_model_path_card)
+
+        self.vision_model_path_card = FilePathCard(
+            FIF.PHOTO,
+            "Vision Model — Gemma 4",
+            "Local Gemma 4 GGUF loaded only when an image needs analysis",
+            "models.vision_path",
+            gguf_filter,
             self.ai_group
         )
-        self.ai_group.addSettingCard(self.web_agent_model_card)
-        
-        # Function Router (Local Gemma) - Read-Only Display
-        self.router_model_card = SettingCard(
-            FIF.ROBOT,
-            "Function Router Model",
-            f"Local FunctionGemma model at: {LOCAL_ROUTER_PATH}",
+        self.ai_group.addSettingCard(self.vision_model_path_card)
+
+        self.vision_projector_path_card = FilePathCard(
+            FIF.IMAGE,
+            "Gemma 4 Vision Projector",
+            "The matching mmproj GGUF file from the same Gemma 4 model release",
+            "models.vision_projector_path",
+            gguf_filter,
             self.ai_group
         )
-        self.ai_group.addSettingCard(self.router_model_card)
-        
-        self.refresh_models_card = PushSettingCard(
-            "Refresh",
-            FIF.SYNC,
-            "Refresh Models",
-            "Fetch available models from Ollama",
+        self.ai_group.addSettingCard(self.vision_projector_path_card)
+
+        self.chat_context_card = TextInputCard(
+            FIF.HISTORY,
+            "K2 Context Length",
+            "Maximum context tokens for the primary coding model",
+            "models.chat_context",
+            "8192",
             self.ai_group
         )
-        self.refresh_models_card.clicked.connect(self._fetch_models)
-        self.ai_group.addSettingCard(self.refresh_models_card)
-        
+        self.ai_group.addSettingCard(self.chat_context_card)
+
+        self.vision_context_card = TextInputCard(
+            FIF.HISTORY,
+            "Gemma Context Length",
+            "Maximum context tokens for image analysis",
+            "models.vision_context",
+            "8192",
+            self.ai_group
+        )
+        self.ai_group.addSettingCard(self.vision_context_card)
+
+        self.gpu_layers_card = TextInputCard(
+            FIF.SPEED,
+            "GPU Layers",
+            "Use -1 for automatic full offload, or specify a lower layer count",
+            "inference.gpu_layers",
+            "-1",
+            self.ai_group
+        )
+        self.ai_group.addSettingCard(self.gpu_layers_card)
+
+        self.cpu_threads_card = TextInputCard(
+            FIF.SPEED,
+            "CPU Threads",
+            "CPU threads used by local inference",
+            "inference.cpu_threads",
+            "6",
+            self.ai_group
+        )
+        self.ai_group.addSettingCard(self.cpu_threads_card)
+
         self.expandLayout.addWidget(self.ai_group)
 
-        # ─────────────────────────────────────────────────────────────
-        # Connection Group
-        # ─────────────────────────────────────────────────────────────
-        self.connection_group = SettingCardGroup("Connection", self.scrollWidget)
-        
-        self.ollama_url_card = UrlInputCard(
-            FIF.LINK,
-            "Ollama URL",
-            "API endpoint for Ollama server",
-            "ollama_url",
-            self.connection_group
-        )
-        self.connection_group.addSettingCard(self.ollama_url_card)
-        
-        self.expandLayout.addWidget(self.connection_group)
-
-        # ─────────────────────────────────────────────────────────────
         # Voice & Audio Group
         # ─────────────────────────────────────────────────────────────
         self.voice_group = SettingCardGroup("Voice & Audio", self.scrollWidget)
