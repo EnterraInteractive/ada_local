@@ -52,6 +52,7 @@ class EmbeddedModelRuntime:
         self._lock = threading.RLock()
         self._llm: Any = None
         self._profile_key: Optional[str] = None
+        self._loaded_profile: Optional[ModelProfile] = None
         self._chat_handler: Any = None
         self._last_error: Optional[str] = None
 
@@ -112,6 +113,7 @@ class EmbeddedModelRuntime:
         self._llm = None
         self._chat_handler = None
         self._profile_key = None
+        self._loaded_profile = None
 
         if old_llm is not None:
             try:
@@ -126,7 +128,7 @@ class EmbeddedModelRuntime:
 
     def _load_locked(self, role: str):
         profile = self._profile(role)
-        if self._llm is not None and self._profile_key == role:
+        if self._llm is not None and self._loaded_profile == profile:
             return self._llm
 
         self._unload_locked()
@@ -180,6 +182,7 @@ class EmbeddedModelRuntime:
         self._llm = llm
         self._chat_handler = handler
         self._profile_key = role
+        self._loaded_profile = profile
         self._last_error = None
         return llm
 
