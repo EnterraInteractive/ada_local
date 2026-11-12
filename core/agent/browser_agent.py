@@ -77,7 +77,7 @@ class BrowserAgent(QObject):
             self._emit_screenshot(b64_img)
 
             # 2. Append screenshot to the LAST user message or as a new user message
-            # Qwen VL expects image input.
+            # Gemma 4 receives the current screenshot as multimodal image input.
             # We construct the message for the current turn
             current_message = {
                 "role": "user",
@@ -93,24 +93,23 @@ class BrowserAgent(QObject):
             # 4. Agent receives User(Image of result).
             
             # Let's verify if the last item has an image. If not, add it.
-            # For Qwen via Ollama, images are passed in the 'images' list field of the message object?
-            # Or formatted in text? Ollama VLM support usually expects "images": [b64]
+            # The embedded VLM client converts this screenshot to an image_url part.
             
-            # Prepare messages for Ollama
-            ollama_messages = []
+            # Prepare browser history for the embedded Gemma vision client.
+            vision_messages = []
             for msg in self.history:
                 # Copy message to avoid mutating history directly with ephemeral data if needed
                 m = msg.copy()
                 if m["role"] == "user" and msg is self.history[-1]:
                     # Attach current screenshot to the LATEST user message (which triggers the assistant)
                     m["images"] = [b64_img]
-                ollama_messages.append(m)
+                vision_messages.append(m)
 
             # 3. Stream Response
             action_data = None
             response_text = ""
             
-            for chunk in self.client.generate_action(ollama_messages):
+            for chunk in self.client.generate_action(vision_messages):
                 if chunk["type"] == "thinking":
                     self.thinking_update.emit(chunk["content"])
                 elif chunk["type"] == "text":
