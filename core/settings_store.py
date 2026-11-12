@@ -14,12 +14,7 @@ from PySide6.QtCore import QObject, Signal
 # Default settings - used when no settings file exists
 DEFAULT_SETTINGS = {
     "theme": "Dark",
-    "ollama_url": "http://localhost:11434",
     "models": {
-        # Legacy Ollama identifiers retained only until voice/browser migration.
-        "chat": "qwen3:1.7b",
-        "web_agent": "qwen3-vl:4b",
-        # Embedded llama.cpp model files (loaded one at a time inside A.D.A.).
         "chat_path": "",
         "chat_context": 8192,
         "vision_path": "",
@@ -31,10 +26,8 @@ DEFAULT_SETTINGS = {
         "gpu_layers": -1,
         "cpu_threads": 6,
     },
-    "web_agent_params": {
-        "temperature": 1.0,
-        "top_k": 20,
-        "top_p": 0.95
+    "voice": {
+        "enabled": False,
     },
     "tts": {
         "voice": "en_GB-alba-medium"
