@@ -7,8 +7,7 @@ import json
 from .browser_controller import BrowserController
 from .vlm_client import VLMClient
 
-from core.model_manager import ensure_exclusive_qwen
-from core.model_persistence import unload_qwen
+from core.inference import runtime as inference_runtime
 
 class BrowserAgent(QObject):
     """
@@ -21,26 +20,22 @@ class BrowserAgent(QObject):
     finished = Signal()
     error_occurred = Signal(str)
 
-    def __init__(self, model_name="qwen3-vl:4b"):
+    def __init__(self):
         super().__init__()
-        self.controller = BrowserController(headless=True) # Headed for debugging/visibility
+        self.controller = BrowserController(headless=True)
         self.client = VLMClient(
-            model_name=model_name,
             model_params={
-                "temperature": 1,
-                "top_k": 20,
-                "top_p": 0.95
+                "temperature": 0.2,
+                "top_p": 0.9
             }
         )
         self.running = False
         self.history = []
 
     def start_task(self, instruction: str):
-        # Unload Qwen model to free VRAM for VLM
-        unload_qwen("browser_agent_using_vlm")
-        # Unload other models to free VRAM
-        ensure_exclusive_qwen(self.client.model_name)
-        
+        # Switch to Gemma in the single embedded model slot.
+        inference_runtime.unload()
+
         self.running = True
         self.history = []
         
@@ -64,6 +59,7 @@ class BrowserAgent(QObject):
             self.error_occurred.emit(str(e))
         finally:
             self.running = False
+            inference_runtime.unload()
             self.finished.emit()
 
     def stop(self):
@@ -202,4 +198,6 @@ class BrowserAgent(QObject):
             self.action_updated.emit(f"Screenshot Error: {e}")
 
     def cleanup(self):
+        self.running = False
         self.controller.stop()
+        inference_runtime.unload()
