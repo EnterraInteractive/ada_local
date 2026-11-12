@@ -1,0 +1,5 @@
+# Optional A.D.A. voice input (wake word + speech recognition)
+# Install only when enabling the Voice Assistant in A.D.A. Settings.
+realtimestt>=0.3.0
+PyAudio>=0.2.14
+torch>=2.6.0
