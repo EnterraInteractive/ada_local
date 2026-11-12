@@ -231,6 +231,101 @@ class EmbeddedModelRuntime:
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
+    @staticmethod
+    def _base64_image_data_uri(image_b64: str, mime_type: str = "image/jpeg") -> str:
+        """Convert a raw screenshot base64 payload to a multimodal data URI."""
+        value = image_b64.strip()
+        if value.startswith("data:"):
+            return value
+        if not value:
+            raise ValueError("The supplied screenshot is empty.")
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except Exception as exc:
+            raise ValueError("The supplied screenshot is not valid base64.") from exc
+        if len(raw) > 25 * 1024 * 1024:
+            raise ValueError("Screenshot exceeds A.D.A.'s 25 MB image limit.")
+        if not mime_type.startswith("image/"):
+            raise ValueError("Image MIME type must start with image/.")
+        return f"data:{mime_type};base64,{value}"
+
+    def vision_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        image_paths: Iterable[str] = (),
+        image_base64: Iterable[str] = (),
+        max_tokens: int = 1600,
+        temperature: float = 0.2,
+        top_p: float = 0.9,
+        keep_vision_loaded: bool = False,
+        restore_chat_model: bool = True,
+    ) -> str:
+        """
+        Run a multimodal Gemma completion inside A.D.A.
+
+        keep_vision_loaded=True is for multi-step browser-agent sessions:
+        Gemma stays loaded between screenshot/action turns and is released when
+        the task ends. Normal chat attachment analysis unloads Gemma immediately.
+        """
+        paths = list(image_paths)
+        encoded_images = list(image_base64)
+        if not paths and not encoded_images:
+            raise ValueError("Vision analysis requires at least one image.")
+
+        with self._lock:
+            previous_role = self._profile_key
+            llm = self._load_locked("vision")
+            try:
+                prepared = [dict(message) for message in messages]
+                last_user_index = next(
+                    (i for i in range(len(prepared) - 1, -1, -1)
+                     if prepared[i].get("role") == "user"),
+                    None,
+                )
+                if last_user_index is None:
+                    prepared.append({"role": "user", "content": ""})
+                    last_user_index = len(prepared) - 1
+
+                original_content = prepared[last_user_index].get("content", "")
+                text_content = (
+                    original_content if isinstance(original_content, str)
+                    else str(original_content)
+                )
+                multimodal_content: List[Dict[str, Any]] = [
+                    {"type": "text", "text": text_content}
+                ]
+
+                for image_path in paths:
+                    multimodal_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": self._image_data_uri(image_path)},
+                    })
+                for image in encoded_images:
+                    multimodal_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": self._base64_image_data_uri(image)},
+                    })
+
+                prepared[last_user_index]["content"] = multimodal_content
+                result = llm.create_chat_completion(
+                    messages=prepared,
+                    stream=False,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+                message = result["choices"][0]["message"]
+                answer = message.get("content", "")
+                if not isinstance(answer, str) or not answer.strip():
+                    raise RuntimeError("Gemma returned an empty visual analysis.")
+                return answer.strip()
+            finally:
+                if not keep_vision_loaded:
+                    self._unload_locked()
+                    if restore_chat_model and previous_role == "chat":
+                        self._load_locked("chat")
+
     def analyze_images(
         self,
         image_paths: Iterable[str],
@@ -239,73 +334,32 @@ class EmbeddedModelRuntime:
         stop_event: Optional[threading.Event] = None,
         restore_chat_model: bool = True,
     ) -> str:
-        """
-        Analyze attached images with Gemma, then optionally restore K2.
-
-        The screenshot itself is passed to Gemma as image data. Only Gemma's
-        textual findings are added to K2's conversation; K2 is not falsely
-        presented as a native vision model.
-        """
-        paths = [str(Path(p).expanduser()) for p in image_paths]
-        if not paths:
+        """Analyze chat attachments, then release Gemma before K2 responds."""
+        if stop_event is not None and stop_event.is_set():
             return ""
-
-        with self._lock:
-            previous_role = self._profile_key
-            llm = self._load_locked("vision")
-
-            analysis = ""
-            try:
-                content: List[Dict[str, Any]] = [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Analyze the attached image(s) carefully. Report only "
-                            "what is visible. For Unreal Editor screenshots, identify "
-                            "relevant panels, settings, warnings, errors, and visible "
-                            "object state. Distinguish observations from inferences. "
-                            f"User's question: {instruction}"
-                        ),
-                    }
-                ]
-                for path in paths:
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": self._image_data_uri(path)},
-                    })
-
-                result = llm.create_chat_completion(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are A.D.A.'s visual analysis model. "
-                                "Describe only evidence present in the supplied images."
-                            ),
-                        },
-                        {"role": "user", "content": content},
-                    ],
-                    stream=False,
-                    max_tokens=1600,
-                    temperature=0.2,
-                    top_p=0.9,
-                )
-                message = result["choices"][0]["message"]
-                value = message.get("content", "")
-                if not isinstance(value, str) or not value.strip():
-                    raise RuntimeError("Gemma returned an empty visual analysis.")
-                analysis = value.strip()
-            finally:
-                # Do not retain Gemma while K2 is generating.
-                self._unload_locked()
-                if (
-                    restore_chat_model
-                    and previous_role == "chat"
-                    and (stop_event is None or not stop_event.is_set())
-                ):
-                    self._load_locked("chat")
-
-            return analysis.strip()
+        return self.vision_completion(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are A.D.A.'s visual analysis model. Describe only "
+                        "evidence present in the supplied images. For Unreal Editor "
+                        "screenshots, identify panels, settings, warnings, errors, "
+                        "and visible object state. Separate observations from inferences."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": instruction or "Describe the attached image(s).",
+                },
+            ],
+            image_paths=image_paths,
+            max_tokens=1600,
+            temperature=0.2,
+            top_p=0.9,
+            keep_vision_loaded=False,
+            restore_chat_model=restore_chat_model,
+        )
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
