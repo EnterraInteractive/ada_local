@@ -13,6 +13,7 @@ from core.stt import STTListener
 from core.tts import tts, SentenceBuffer
 from core.function_executor import executor as function_executor
 from core.inference import runtime as inference_runtime
+from core.command_router import route_command
 
 
 class VoiceAssistant(QObject):
@@ -127,51 +128,10 @@ class VoiceAssistant(QObject):
         )
         thread.start()
     
-    def _route_voice_command(self, user_text: str):
-        """Route explicit voice actions without loading a second intent model."""
-        text = user_text.strip()
-        lower = text.lower()
-
-        match = re.search(r"\b(?:set|start)\s+(?:a\s+)?timer\s+(?:for\s+)?(.+)", lower)
-        if match:
-            return "set_timer", {"duration": match.group(1), "label": "Timer"}
-
-        match = re.search(r"\bset\s+(?:an?\s+)?alarm\s+(?:for|at)\s+(.+)", lower)
-        if match:
-            return "set_alarm", {"time": match.group(1), "label": "Alarm"}
-
-        match = re.search(r"\badd\s+(?:a\s+)?task\s+(?:to\s+)?(.+)", text, re.IGNORECASE)
-        if match:
-            return "add_task", {"text": match.group(1).strip()}
-
-        match = re.search(r"\bsearch(?:\s+the\s+web)?\s+for\s+(.+)", text, re.IGNORECASE)
-        if match:
-            return "web_search", {"query": match.group(1).strip()}
-
-        match = re.search(
-            r"\bturn\s+(on|off|toggle|dim)\s+(?:the\s+)?(.+?)(?:\s+lights?)?$",
-            lower,
-        )
-        if match:
-            action, device = match.groups()
-            return "control_light", {
-                "action": action,
-                "device_name": device.strip(),
-            }
-
-        if any(term in lower for term in (
-            "what is on my schedule", "what's on my schedule",
-            "what do i have today", "show my tasks", "system status",
-            "system information", "what's the weather"
-        )):
-            return "get_system_info", {}
-
-        return None, {}
-
     def _process_query(self, user_text: str):
         """Process recognized speech through the embedded K2 model."""
         try:
-            func_name, params = self._route_voice_command(user_text)
+            func_name, params = route_command(user_text)
             context_prompt = user_text
 
             if func_name:
