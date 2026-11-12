@@ -2,69 +2,20 @@
 Comprehensive Settings Tab with model selection, connection settings, and preferences.
 """
 
-from config import LOCAL_ROUTER_PATH, RESPONDER_MODEL
-
-import requests
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFileDialog
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtCore import Qt, Signal
 
 from qfluentwidgets import (
     ScrollArea, ExpandLayout, SettingCardGroup, PushSettingCard, FluentIcon as FIF,
     setTheme, Theme, PrimaryPushSettingCard, ComboBox, LineEdit, 
-    PrimaryPushButton, InfoBar, InfoBarPosition, SettingCard, Slider, 
+    InfoBar, InfoBarPosition, SettingCard, Slider, 
     StrongBodyLabel, SwitchButton
 )
 
 from core.settings_store import settings
-
-
-class ModelFetcher(QThread):
-    """Background thread to fetch available Ollama models."""
-    models_fetched = Signal(list)
-    error_occurred = Signal(str)
-    
-    def __init__(self, ollama_url: str):
-        super().__init__()
-        self.ollama_url = ollama_url
-    
-    def run(self):
-        try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                models = [m['name'] for m in data.get('models', [])]
-                self.models_fetched.emit(models)
-            else:
-                self.error_occurred.emit(f"HTTP {response.status_code}")
-        except requests.exceptions.ConnectionError:
-            self.error_occurred.emit("Cannot connect to Ollama")
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-
-
-class ConnectionTester(QThread):
-    """Background thread to test Ollama connection."""
-    success = Signal()
-    failed = Signal(str)
-    
-    def __init__(self, url: str):
-        super().__init__()
-        self.url = url
-    
-    def run(self):
-        try:
-            response = requests.get(f"{self.url}/api/tags", timeout=5)
-            if response.status_code == 200:
-                self.success.emit()
-            else:
-                self.failed.emit(f"HTTP {response.status_code}")
-        except requests.exceptions.ConnectionError:
-            self.failed.emit("Connection refused")
-        except Exception as e:
-            self.failed.emit(str(e))
 
 
 class ComboBoxCard(SettingCard):
@@ -92,114 +43,6 @@ class ComboBoxCard(SettingCard):
     def _on_changed(self, text: str):
         settings.set(self.key_path, text)
         self.value_changed.emit(text)
-
-
-class ModelSelectCard(SettingCard):
-    """Custom setting card with a ComboBox for model selection."""
-    
-    model_changed = Signal(str)
-    
-    def __init__(self, icon, title, description, key_path: str, parent=None):
-        super().__init__(icon, title, description, parent)
-        self.key_path = key_path
-        
-        self.combo = ComboBox(self)
-        self.combo.setMinimumWidth(180)
-        self.combo.setPlaceholderText("Select model...")
-        
-        # Load current value
-        current = settings.get(key_path, "")
-        if current:
-            self.combo.addItem(current)
-            self.combo.setCurrentText(current)
-        
-        self.combo.currentTextChanged.connect(self._on_changed)
-        self.hBoxLayout.addWidget(self.combo, 0, Qt.AlignRight)
-        self.hBoxLayout.addSpacing(16)
-    
-    def _on_changed(self, text: str):
-        if text:
-            settings.set(self.key_path, text)
-            self.model_changed.emit(text)
-    
-    def update_models(self, models: list):
-        """Update the dropdown with available models."""
-        current = self.combo.currentText()
-        self.combo.clear()
-        self.combo.addItems(models)
-        if current in models:
-            self.combo.setCurrentText(current)
-        elif models:
-            self.combo.setCurrentIndex(0)
-
-
-class UrlInputCard(SettingCard):
-    """Setting card with URL input and test button."""
-    
-    def __init__(self, icon, title, description, key_path: str, parent=None):
-        super().__init__(icon, title, description, parent)
-        self.key_path = key_path
-        self.tester = None
-        
-        self.url_input = LineEdit(self)
-        self.url_input.setMinimumWidth(250)
-        self.url_input.setText(settings.get(key_path, "http://localhost:11434"))
-        self.url_input.textChanged.connect(self._on_url_changed)
-        
-        self.test_btn = PrimaryPushButton("Test", self)
-        self.test_btn.setFixedWidth(70)
-        self.test_btn.clicked.connect(self._test_connection)
-        
-        self.hBoxLayout.addWidget(self.url_input, 0, Qt.AlignRight)
-        self.hBoxLayout.addSpacing(8)
-        self.hBoxLayout.addWidget(self.test_btn, 0, Qt.AlignRight)
-        self.hBoxLayout.addSpacing(16)
-    
-    def _on_url_changed(self, text: str):
-        settings.set(self.key_path, text)
-    
-    def _test_connection(self):
-        url = self.url_input.text().strip()
-        if not url:
-            return
-        
-        self.test_btn.setEnabled(False)
-        self.test_btn.setText("...")
-        
-        self.tester = ConnectionTester(url)
-        self.tester.success.connect(self._on_test_success)
-        self.tester.failed.connect(self._on_test_failed)
-        self.tester.finished.connect(self._on_test_done)
-        self.tester.start()
-    
-    @Slot()
-    def _on_test_success(self):
-        InfoBar.success(
-            title="Connected",
-            content="Ollama is reachable!",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self.window()
-        )
-    
-    @Slot(str)
-    def _on_test_failed(self, error: str):
-        InfoBar.error(
-            title="Connection Failed",
-            content=error,
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=5000,
-            parent=self.window()
-        )
-    
-    @Slot()
-    def _on_test_done(self):
-        self.test_btn.setEnabled(True)
-        self.test_btn.setText("Test")
 
 
 class FilePathCard(SettingCard):
@@ -579,39 +422,3 @@ class SettingsTab(ScrollArea):
             parent=self.window()
         )
     
-    def _fetch_models(self):
-        """Fetch available models from Ollama."""
-        url = settings.get("ollama_url", "http://localhost:11434")
-        
-        self.model_fetcher = ModelFetcher(url)
-        self.model_fetcher.models_fetched.connect(self._on_models_fetched)
-        self.model_fetcher.error_occurred.connect(self._on_models_error)
-        self.model_fetcher.start()
-    
-    @Slot(list)
-    def _on_models_fetched(self, models: list):
-        self._available_models = models
-        self.chat_model_card.update_models(models)
-        self.web_agent_model_card.update_models(models)
-        
-        InfoBar.success(
-            title="Models Loaded",
-            content=f"Found {len(models)} models",
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=2000,
-            parent=self.window()
-        )
-    
-    @Slot(str)
-    def _on_models_error(self, error: str):
-        InfoBar.warning(
-            title="Could not fetch models",
-            content=error,
-            orient=Qt.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=4000,
-            parent=self.window()
-        )
