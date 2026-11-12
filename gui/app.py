@@ -14,7 +14,7 @@ from qfluentwidgets import (
 )
 
 from gui.handlers import ChatHandlers
-from core.model_manager import unload_all_models
+from core.inference import runtime as inference_runtime
 from core.voice_assistant import voice_assistant
 from core.tts import tts
 from config import VOICE_ASSISTANT_ENABLED, GREEN, RESET
@@ -250,9 +250,9 @@ class MainWindow(FluentWindow):
         # Initial sidebar refresh
         self.chat_tab.refresh_sidebar()
 
-    def _on_send(self, text):
-        """Forward send request to handlers."""
-        self.handlers.send_message(text)
+    def _on_send(self, text, image_paths=None):
+        """Forward text and optional image attachments to the chat worker."""
+        self.handlers.send_message(text, image_paths=image_paths)
         
     def _on_session_clicked(self, session_id):
         """Load session."""
@@ -347,7 +347,7 @@ class MainWindow(FluentWindow):
         if VOICE_ASSISTANT_ENABLED:
             voice_assistant.stop()
         
-        unload_all_models(sync=True)
+        inference_runtime.unload()
         event.accept()
 
 
