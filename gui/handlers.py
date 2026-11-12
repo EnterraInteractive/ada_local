@@ -10,8 +10,6 @@ from core.inference import runtime as inference_runtime
 from core.command_router import route_command
 from core.function_executor import executor as function_executor
 
-ACTION_FUNCTIONS = {\"control_light\", \"set_timer\", \"set_alarm\", \"create_calendar_event\", \"add_task\", \"web_search\"}
-
 
 # DEBUG: Set to True to test streaming without TTS blocking
 DEBUG_SKIP_TTS = False
